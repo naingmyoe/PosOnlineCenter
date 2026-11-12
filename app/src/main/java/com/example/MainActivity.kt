@@ -8,6 +8,7 @@ import androidx.activity.viewModels
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import androidx.compose.animation.*
@@ -29,6 +30,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val isDark by viewModel.isDarkTheme.collectAsState()
+            val isAccountExpired by viewModel.isAccountExpired.collectAsState()
             com.example.ui.screens.globalIsDarkTheme = isDark
             MyApplicationTheme(darkTheme = isDark) {
                 androidx.compose.material3.Surface(
@@ -36,6 +38,24 @@ class MainActivity : ComponentActivity() {
                     color = if (isDark) androidx.compose.ui.graphics.Color(0xFF1B1A1F) else androidx.compose.ui.graphics.Color.White
                 ) {
                     val navController = rememberNavController()
+                    val navBackStackEntry by navController.currentBackStackEntryAsState()
+                    val currentRoute = navBackStackEntry?.destination?.route
+
+                    androidx.compose.runtime.LaunchedEffect(isAccountExpired, currentRoute) {
+                        if (isAccountExpired) {
+                            if (currentRoute != null &&
+                                currentRoute != "subscription_expired" &&
+                                currentRoute != "splash" &&
+                                currentRoute != "login" &&
+                                currentRoute != "register" &&
+                                currentRoute != "waiting_activation"
+                            ) {
+                                navController.navigate("subscription_expired") {
+                                    popUpTo("dashboard") { inclusive = true }
+                                }
+                            }
+                        }
+                    }
                     NavHost(
                         navController = navController,
                         startDestination = "splash",

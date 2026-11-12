@@ -50,6 +50,57 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentUser = MutableStateFlow<UserAccount?>(null)
     val currentUser: StateFlow<UserAccount?> = _currentUser.asStateFlow()
 
+    // Global account expiration StateFlow
+    val isAccountExpired = MutableStateFlow<Boolean>(false)
+
+    fun checkAndSetAccountExpired(phone: String? = null): Boolean {
+        val targetPhone = phone ?: _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+        if (targetPhone.isBlank()) return false
+        val now = System.currentTimeMillis()
+        val expiresAt = sharedPrefs.getLong("account_expires_at_$targetPhone", 0L)
+        val isExpiredByTime = (expiresAt > 0L && now > expiresAt)
+        val isExpiredByStatus = (_currentUser.value?.status == "expired")
+        val expired = isExpiredByTime || isExpiredByStatus
+        if (expired) {
+            isAccountExpired.value = true
+            viewModelScope.launch(Dispatchers.IO) {
+                val localAcc = repository.getAccountByPhone(targetPhone)
+                if (localAcc != null && localAcc.status != "expired") {
+                    repository.insertAccount(localAcc.copy(status = "expired"))
+                }
+            }
+            if (_currentUser.value != null && _currentUser.value?.status != "expired") {
+                _currentUser.value = _currentUser.value?.copy(status = "expired")
+            }
+        } else {
+            isAccountExpired.value = false
+        }
+        return expired
+    }
+
+    suspend fun checkAndSetAccountExpiredDirect(phone: String? = null): Boolean {
+        val targetPhone = phone ?: _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+        if (targetPhone.isBlank()) return false
+        val now = System.currentTimeMillis()
+        val expiresAt = sharedPrefs.getLong("account_expires_at_$targetPhone", 0L)
+        val localAcc = repository.getAccountByPhone(targetPhone)
+        val isExpiredByTime = (expiresAt > 0L && now > expiresAt)
+        val isExpiredByStatus = (localAcc?.status == "expired" || _currentUser.value?.status == "expired")
+        val expired = isExpiredByTime || isExpiredByStatus
+        if (expired) {
+            isAccountExpired.value = true
+            if (localAcc != null && localAcc.status != "expired") {
+                repository.insertAccount(localAcc.copy(status = "expired"))
+            }
+            if (_currentUser.value != null && _currentUser.value?.status != "expired") {
+                _currentUser.value = _currentUser.value?.copy(status = "expired")
+            }
+        } else {
+            isAccountExpired.value = false
+        }
+        return expired
+    }
+
     suspend fun getLocalAccountByPhone(phone: String): UserAccount? {
         return repository.getAccountByPhone(phone)
     }
@@ -214,7 +265,62 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5000),
         0
     )
-    val totalUnsyncedCount: StateFlow<Int> = repository.totalUnsyncedCount.stateIn(
+
+    val unsyncedGroupsCount = MutableStateFlow(sharedPrefs.getStringSet("pending_groups_set", emptySet())?.size ?: 0)
+    val unsyncedUnitsCount = MutableStateFlow(sharedPrefs.getStringSet("pending_units_set", emptySet())?.size ?: 0)
+    val unsyncedPaymentsCount = MutableStateFlow(sharedPrefs.getStringSet("pending_payments_set", emptySet())?.size ?: 0)
+    val unsyncedSuppliersCount = MutableStateFlow(sharedPrefs.getStringSet("pending_suppliers_set", emptySet())?.size ?: 0)
+
+    fun recordPendingGroupChange(name: String) {
+        val set = (sharedPrefs.getStringSet("pending_groups_set", emptySet()) ?: emptySet()).toMutableSet()
+        set.add(name)
+        sharedPrefs.edit().putStringSet("pending_groups_set", set).apply()
+        unsyncedGroupsCount.value = set.size
+    }
+
+    fun recordPendingUnitChange(name: String) {
+        val set = (sharedPrefs.getStringSet("pending_units_set", emptySet()) ?: emptySet()).toMutableSet()
+        set.add(name)
+        sharedPrefs.edit().putStringSet("pending_units_set", set).apply()
+        unsyncedUnitsCount.value = set.size
+    }
+
+    fun recordPendingPaymentChange(name: String) {
+        val set = (sharedPrefs.getStringSet("pending_payments_set", emptySet()) ?: emptySet()).toMutableSet()
+        set.add(name)
+        sharedPrefs.edit().putStringSet("pending_payments_set", set).apply()
+        unsyncedPaymentsCount.value = set.size
+    }
+
+    fun recordPendingSupplierChange(name: String) {
+        val set = (sharedPrefs.getStringSet("pending_suppliers_set", emptySet()) ?: emptySet()).toMutableSet()
+        set.add(name)
+        sharedPrefs.edit().putStringSet("pending_suppliers_set", set).apply()
+        unsyncedSuppliersCount.value = set.size
+    }
+
+    fun clearAllPendingMasterDataChanges() {
+        sharedPrefs.edit()
+            .remove("pending_groups_set")
+            .remove("pending_units_set")
+            .remove("pending_payments_set")
+            .remove("pending_suppliers_set")
+            .apply()
+        unsyncedGroupsCount.value = 0
+        unsyncedUnitsCount.value = 0
+        unsyncedPaymentsCount.value = 0
+        unsyncedSuppliersCount.value = 0
+    }
+
+    val totalUnsyncedCount: StateFlow<Int> = combine(
+        repository.totalUnsyncedCount,
+        unsyncedGroupsCount,
+        unsyncedUnitsCount,
+        unsyncedPaymentsCount,
+        unsyncedSuppliersCount
+    ) { baseTotal, groups, units, payments, suppliers ->
+        baseTotal + groups + units + payments + suppliers
+    }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
         0
@@ -238,6 +344,17 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     var isFromSalesFlow = false
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val savedPhone = sharedPrefs.getString("logged_in_phone", null)
+            if (!savedPhone.isNullOrBlank()) {
+                val acc = repository.getAccountByPhone(savedPhone)
+                if (acc != null) {
+                    _currentUser.value = acc
+                }
+                checkAndSetAccountExpired(savedPhone)
+            }
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             com.example.util.BackupAndExcelUtils.performAutoDailyBackup(application)
         }
@@ -306,36 +423,53 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
             e.printStackTrace()
         }
 
-        // Periodic network and server reachability check, auto-sync and 5-device real-time sync loop
+        // Periodic network and server reachability check, auto-sync, account expiration guard and 5-device real-time sync loop
         viewModelScope.launch {
             var cycleCount = 0
             while (true) {
                 try {
                     val available = com.example.util.SyncManager.isNetworkAvailable(application)
                     isOnlineState.value = available
+                    val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", null)
+
+                    if (!phone.isNullOrBlank()) {
+                        checkAndSetAccountExpired(phone)
+                    }
+
                     if (available) {
                         val currentUrl = cloudflareWorkerUrl.value
                         val serverCheck = com.example.util.SyncManager.checkServerReachability(currentUrl)
                         isServerReachable.value = serverCheck.isReachable
-                        val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", null)
-                        if (!phone.isNullOrBlank() && !_isUploading.value && serverCheck.isReachable) {
-                            // 1. Upload any local offline backlog
-                            val unsyncedV = repository.getUnsyncedCompletedVouchers()
-                            val unsyncedP = repository.getUnsyncedProducts()
-                            val unsyncedC = repository.getUnsyncedCustomers()
-                            if (unsyncedV.isNotEmpty() || unsyncedP.isNotEmpty() || unsyncedC.isNotEmpty()) {
-                                triggerRealSync()
+                        if (!phone.isNullOrBlank()) {
+                            // Check user activation / expiration status with server periodically (every 2 cycles = 12s)
+                            if (serverCheck.isReachable && cycleCount % 2 == 0) {
+                                checkUserActivationStatus(application, phone)
+                                checkAndSetAccountExpired(phone)
                             }
+                            if (!_isUploading.value && serverCheck.isReachable) {
+                                // 1. Upload any local offline backlog
+                                val unsyncedV = repository.getUnsyncedCompletedVouchers()
+                                val unsyncedP = repository.getUnsyncedProducts()
+                                val unsyncedC = repository.getUnsyncedCustomers()
+                                if (unsyncedV.isNotEmpty() || unsyncedP.isNotEmpty() || unsyncedC.isNotEmpty()) {
+                                    triggerRealSync()
+                                }
 
-                            // 2. Multi-device real-time sync: silently pull latest sales, stock & product edits from other phones every 6s
-                            cycleCount++
-                            if (cycleCount >= 1 && !_isUploading.value) {
-                                cycleCount = 0
-                                com.example.util.SyncManager.pullCloudData(
-                                    workerUrl = currentUrl,
-                                    userPhone = phone,
-                                    repository = repository
-                                )
+                                // 2. Multi-device real-time sync: silently pull latest sales, stock & product edits from other phones every 6s
+                                cycleCount++
+                                if (cycleCount >= 1 && !_isUploading.value) {
+                                    cycleCount = 0
+                                    com.example.util.SyncManager.pullCloudData(
+                                        workerUrl = currentUrl,
+                                        userPhone = phone,
+                                        repository = repository,
+                                        pendingDeletedCustomers = getPendingDeletedCustomers().toSet(),
+                                        pendingDeletedSuppliers = getPendingDeletedSuppliers().toSet(),
+                                        pendingDeletedGroups = getPendingDeletedGroups().toSet(),
+                                        pendingDeletedUnits = getPendingDeletedUnits().toSet(),
+                                        pendingDeletedPayments = getPendingDeletedPayments().toSet()
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -732,6 +866,7 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (status == "on") {
+                        isAccountExpired.value = false
                         if (!targetPhone.isNullOrEmpty()) {
                             val acc = repository.getAccountByPhone(targetPhone) ?: _currentUser.value
                             val updatedAcc = acc?.copy(
@@ -1216,6 +1351,20 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                         isSynced = false
                     )
                     repository.updateProduct(updatedProduct)
+                    recordManualStockAdjustment(updatedProduct.id)
+                    val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                    if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            com.example.util.SyncManager.adjustStockOnCloud(
+                                workerUrl = cloudflareWorkerUrl.value,
+                                userPhone = phone,
+                                productId = updatedProduct.id,
+                                productName = updatedProduct.name,
+                                newQuantity = updatedProduct.quantity,
+                                newAlertQuantity = updatedProduct.alertQuantity
+                            )
+                        }
+                    }
                     editingProduct.value = null
                     savedProduct = updatedProduct
 
@@ -1335,6 +1484,89 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().remove("pending_deleted_vouchers").apply()
     }
 
+    fun recordManualStockAdjustment(productId: Long) {
+        val currentSet = sharedPrefs.getStringSet("manual_stock_adjusted_products", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(productId.toString())
+        sharedPrefs.edit().putStringSet("manual_stock_adjusted_products", currentSet).apply()
+    }
+
+    fun removeManualStockAdjustment(productId: Long) {
+        val currentSet = sharedPrefs.getStringSet("manual_stock_adjusted_products", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.remove(productId.toString())
+        sharedPrefs.edit().putStringSet("manual_stock_adjusted_products", currentSet).apply()
+    }
+
+    fun getPendingManualStockAdjustments(): Set<Long> {
+        val set = sharedPrefs.getStringSet("manual_stock_adjusted_products", emptySet()) ?: emptySet()
+        return set.mapNotNull { it.toLongOrNull() }.toSet()
+    }
+
+    fun clearManualStockAdjustments() {
+        sharedPrefs.edit().remove("manual_stock_adjusted_products").apply()
+    }
+
+    fun recordPendingDeletedCustomer(name: String, id: Long = 0L) {
+        val currentSet = sharedPrefs.getStringSet("pending_deleted_customers", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(name.trim())
+        if (id > 0L) currentSet.add(id.toString())
+        sharedPrefs.edit().putStringSet("pending_deleted_customers", currentSet).apply()
+    }
+    fun getPendingDeletedCustomers(): List<String> {
+        return sharedPrefs.getStringSet("pending_deleted_customers", emptySet())?.toList() ?: emptyList()
+    }
+    fun clearPendingDeletedCustomers() {
+        sharedPrefs.edit().remove("pending_deleted_customers").apply()
+    }
+
+    fun recordPendingDeletedSupplier(name: String, id: Long = 0L) {
+        val currentSet = sharedPrefs.getStringSet("pending_deleted_suppliers", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(name.trim())
+        if (id > 0L) currentSet.add(id.toString())
+        sharedPrefs.edit().putStringSet("pending_deleted_suppliers", currentSet).apply()
+    }
+    fun getPendingDeletedSuppliers(): List<String> {
+        return sharedPrefs.getStringSet("pending_deleted_suppliers", emptySet())?.toList() ?: emptyList()
+    }
+    fun clearPendingDeletedSuppliers() {
+        sharedPrefs.edit().remove("pending_deleted_suppliers").apply()
+    }
+
+    fun recordPendingDeletedGroup(name: String) {
+        val currentSet = sharedPrefs.getStringSet("pending_deleted_groups", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(name.trim())
+        sharedPrefs.edit().putStringSet("pending_deleted_groups", currentSet).apply()
+    }
+    fun getPendingDeletedGroups(): List<String> {
+        return sharedPrefs.getStringSet("pending_deleted_groups", emptySet())?.toList() ?: emptyList()
+    }
+    fun clearPendingDeletedGroups() {
+        sharedPrefs.edit().remove("pending_deleted_groups").apply()
+    }
+
+    fun recordPendingDeletedUnit(name: String) {
+        val currentSet = sharedPrefs.getStringSet("pending_deleted_units", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(name.trim())
+        sharedPrefs.edit().putStringSet("pending_deleted_units", currentSet).apply()
+    }
+    fun getPendingDeletedUnits(): List<String> {
+        return sharedPrefs.getStringSet("pending_deleted_units", emptySet())?.toList() ?: emptyList()
+    }
+    fun clearPendingDeletedUnits() {
+        sharedPrefs.edit().remove("pending_deleted_units").apply()
+    }
+
+    fun recordPendingDeletedPayment(method: String) {
+        val currentSet = sharedPrefs.getStringSet("pending_deleted_payments", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+        currentSet.add(method.trim())
+        sharedPrefs.edit().putStringSet("pending_deleted_payments", currentSet).apply()
+    }
+    fun getPendingDeletedPayments(): List<String> {
+        return sharedPrefs.getStringSet("pending_deleted_payments", emptySet())?.toList() ?: emptyList()
+    }
+    fun clearPendingDeletedPayments() {
+        sharedPrefs.edit().remove("pending_deleted_payments").apply()
+    }
+
     fun deleteProduct(product: Product, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.deleteProduct(product)
@@ -1396,6 +1628,10 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (name.isNotEmpty()) {
                 repository.insertGroup(ProductGroup(name))
+                recordPendingGroupChange(name)
+                if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1405,6 +1641,21 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
             if (newName.isNotEmpty() && oldGroup.name != newName) {
                 repository.deleteGroup(oldGroup)
                 repository.insertGroup(ProductGroup(newName))
+                recordPendingGroupChange(newName)
+                val prods = repository.getAllProductsDirect()
+                for (p in prods) {
+                    if (p.groupName == oldGroup.name) {
+                        repository.updateProduct(p.copy(groupName = newName, isSynced = false))
+                    }
+                }
+                recordPendingDeletedGroup(oldGroup.name)
+                val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        com.example.util.SyncManager.deleteGroupOnCloud(cloudflareWorkerUrl.value, phone, oldGroup.name)
+                    }
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1412,6 +1663,15 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProductGroup(group: ProductGroup) {
         viewModelScope.launch {
             repository.deleteGroup(group)
+            recordPendingGroupChange(group.name)
+            recordPendingDeletedGroup(group.name)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.deleteGroupOnCloud(cloudflareWorkerUrl.value, phone, group.name)
+                }
+                triggerRealSync()
+            }
         }
     }
 
@@ -1420,6 +1680,10 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (name.isNotEmpty()) {
                 repository.insertUnit(ProductUnit(name))
+                recordPendingUnitChange(name)
+                if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1429,6 +1693,21 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
             if (newName.isNotEmpty() && oldUnit.name != newName) {
                 repository.deleteUnit(oldUnit)
                 repository.insertUnit(ProductUnit(newName))
+                recordPendingUnitChange(newName)
+                val prods = repository.getAllProductsDirect()
+                for (p in prods) {
+                    if (p.unit == oldUnit.name) {
+                        repository.updateProduct(p.copy(unit = newName, isSynced = false))
+                    }
+                }
+                recordPendingDeletedUnit(oldUnit.name)
+                val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        com.example.util.SyncManager.deleteUnitOnCloud(cloudflareWorkerUrl.value, phone, oldUnit.name)
+                    }
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1436,6 +1715,15 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProductUnit(unit: ProductUnit) {
         viewModelScope.launch {
             repository.deleteUnit(unit)
+            recordPendingUnitChange(unit.name)
+            recordPendingDeletedUnit(unit.name)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.deleteUnitOnCloud(cloudflareWorkerUrl.value, phone, unit.name)
+                }
+                triggerRealSync()
+            }
         }
     }
 
@@ -1450,14 +1738,29 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     repository.insertCustomer(Customer(name = cleanName, phone = phone, address = address, note = note, isSynced = false))
                 }
+                if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    triggerRealSync()
+                }
                 onSuccess()
             }
         }
     }
 
-    fun updateCustomer(customer: Customer, onSuccess: () -> Unit) {
+    fun updateCustomer(customer: Customer, oldName: String? = null, onSuccess: () -> Unit) {
         viewModelScope.launch {
+            if (oldName != null && oldName.trim().isNotBlank() && !oldName.trim().equals(customer.name.trim(), ignoreCase = true)) {
+                recordPendingDeletedCustomer(oldName.trim(), customer.id)
+                val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        com.example.util.SyncManager.deleteCustomerOnCloud(cloudflareWorkerUrl.value, phone, oldName.trim(), customer.id)
+                    }
+                }
+            }
             repository.updateCustomer(customer.copy(isSynced = false))
+            if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                triggerRealSync()
+            }
             onSuccess()
         }
     }
@@ -1465,6 +1768,14 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteCustomer(customer: Customer, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.deleteCustomer(customer)
+            recordPendingDeletedCustomer(customer.name, customer.id)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.deleteCustomerOnCloud(cloudflareWorkerUrl.value, phone, customer.name, customer.id)
+                }
+                triggerRealSync()
+            }
             onSuccess()
         }
     }
@@ -1480,14 +1791,31 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     repository.insertSupplier(Supplier(name = cleanName, phone = phone, address = address, note = note))
                 }
+                recordPendingSupplierChange(cleanName)
+                if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    triggerRealSync()
+                }
                 onSuccess()
             }
         }
     }
 
-    fun updateSupplier(supplier: Supplier, onSuccess: () -> Unit) {
+    fun updateSupplier(supplier: Supplier, oldName: String? = null, onSuccess: () -> Unit) {
         viewModelScope.launch {
+            if (oldName != null && oldName.trim().isNotBlank() && !oldName.trim().equals(supplier.name.trim(), ignoreCase = true)) {
+                recordPendingDeletedSupplier(oldName.trim(), supplier.id)
+                val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        com.example.util.SyncManager.deleteSupplierOnCloud(cloudflareWorkerUrl.value, phone, oldName.trim(), supplier.id)
+                    }
+                }
+            }
             repository.updateSupplier(supplier)
+            recordPendingSupplierChange(supplier.name)
+            if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                triggerRealSync()
+            }
             onSuccess()
         }
     }
@@ -1495,6 +1823,15 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteSupplier(supplier: Supplier, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.deleteSupplier(supplier)
+            recordPendingSupplierChange(supplier.name)
+            recordPendingDeletedSupplier(supplier.name, supplier.id)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.deleteSupplierOnCloud(cloudflareWorkerUrl.value, phone, supplier.name, supplier.id)
+                }
+                triggerRealSync()
+            }
             onSuccess()
         }
     }
@@ -1504,6 +1841,10 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (method.isNotEmpty()) {
                 repository.insertPayment(Payment(method = method, amount = 0.0, date = System.currentTimeMillis()))
+                recordPendingPaymentChange(method)
+                if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1511,7 +1852,17 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePayment(payment: Payment, newMethod: String) {
         viewModelScope.launch {
             if (newMethod.isNotEmpty()) {
+                val oldMethod = payment.method
                 repository.updatePayment(payment.copy(method = newMethod))
+                recordPendingPaymentChange(newMethod)
+                recordPendingDeletedPayment(oldMethod)
+                val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+                if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        com.example.util.SyncManager.deletePaymentOnCloud(cloudflareWorkerUrl.value, phone, oldMethod)
+                    }
+                    triggerRealSync()
+                }
             }
         }
     }
@@ -1519,6 +1870,15 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun deletePayment(payment: Payment) {
         viewModelScope.launch {
             repository.deletePayment(payment)
+            recordPendingPaymentChange(payment.method)
+            recordPendingDeletedPayment(payment.method)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.deletePaymentOnCloud(cloudflareWorkerUrl.value, phone, payment.method)
+                }
+                triggerRealSync()
+            }
         }
     }
 
@@ -1828,7 +2188,20 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun updateProductStock(productId: Long, newQuantity: Int) {
         viewModelScope.launch {
             repository.updateStock(productId, newQuantity)
-            if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+            recordManualStockAdjustment(productId)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            val prod = repository.getProductDirect(productId)
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.adjustStockOnCloud(
+                        workerUrl = cloudflareWorkerUrl.value,
+                        userPhone = phone,
+                        productId = productId,
+                        productName = prod?.name ?: "",
+                        newQuantity = newQuantity,
+                        newAlertQuantity = prod?.alertQuantity ?: 0
+                    )
+                }
                 triggerRealSync()
             }
         }
@@ -1837,7 +2210,20 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     fun updateProductStockAndAlert(productId: Long, newQuantity: Int, newAlertQuantity: Int) {
         viewModelScope.launch {
             repository.updateStockAndAlert(productId, newQuantity, newAlertQuantity)
-            if (com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+            recordManualStockAdjustment(productId)
+            val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
+            val prod = repository.getProductDirect(productId)
+            if (phone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    com.example.util.SyncManager.adjustStockOnCloud(
+                        workerUrl = cloudflareWorkerUrl.value,
+                        userPhone = phone,
+                        productId = productId,
+                        productName = prod?.name ?: "",
+                        newQuantity = newQuantity,
+                        newAlertQuantity = newAlertQuantity
+                    )
+                }
                 triggerRealSync()
             }
         }
@@ -2003,13 +2389,25 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
             syncStatusMessage.value = "Cloud သို့ ဒေတာတင်နေပါသည်..."
             val (delIds, delNames) = getPendingDeletedProducts()
             val delVouchers = getPendingDeletedVouchers()
+            val manualStockProds = getPendingManualStockAdjustments()
+            val delCustomers = getPendingDeletedCustomers()
+            val delSuppliers = getPendingDeletedSuppliers()
+            val delGroups = getPendingDeletedGroups()
+            val delUnits = getPendingDeletedUnits()
+            val delPayments = getPendingDeletedPayments()
             val result = com.example.util.SyncManager.syncAllPendingData(
                 workerUrl = cloudflareWorkerUrl.value,
                 userPhone = phone,
                 repository = repository,
                 pendingDeletedProductIds = delIds,
                 pendingDeletedProductNames = delNames,
-                pendingDeletedVouchers = delVouchers
+                pendingDeletedVouchers = delVouchers,
+                manualStockAdjustedProductIds = manualStockProds,
+                pendingDeletedCustomers = delCustomers,
+                pendingDeletedSuppliers = delSuppliers,
+                pendingDeletedGroups = delGroups,
+                pendingDeletedUnits = delUnits,
+                pendingDeletedPayments = delPayments
             )
             if (result.success) {
                 if (delIds.isNotEmpty() || delNames.isNotEmpty()) {
@@ -2018,6 +2416,15 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                 if (delVouchers.isNotEmpty()) {
                     clearPendingDeletedVouchers()
                 }
+                if (manualStockProds.isNotEmpty()) {
+                    clearManualStockAdjustments()
+                }
+                if (delCustomers.isNotEmpty()) clearPendingDeletedCustomers()
+                if (delSuppliers.isNotEmpty()) clearPendingDeletedSuppliers()
+                if (delGroups.isNotEmpty()) clearPendingDeletedGroups()
+                if (delUnits.isNotEmpty()) clearPendingDeletedUnits()
+                if (delPayments.isNotEmpty()) clearPendingDeletedPayments()
+                clearAllPendingMasterDataChanges()
             }
             _isUploading.value = false
             syncStatusMessage.value = result.message
@@ -2062,6 +2469,11 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
                 workerUrl = cloudflareWorkerUrl.value,
                 userPhone = phone,
                 repository = repository,
+                pendingDeletedCustomers = getPendingDeletedCustomers().toSet(),
+                pendingDeletedSuppliers = getPendingDeletedSuppliers().toSet(),
+                pendingDeletedGroups = getPendingDeletedGroups().toSet(),
+                pendingDeletedUnits = getPendingDeletedUnits().toSet(),
+                pendingDeletedPayments = getPendingDeletedPayments().toSet(),
                 onProgress = { progress, msg ->
                     cloudDownloadProgress.value = progress
                     cloudDownloadProgressMsg.value = msg
@@ -2088,6 +2500,11 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
             workerUrl = cloudflareWorkerUrl.value,
             userPhone = phone,
             repository = repository,
+            pendingDeletedCustomers = getPendingDeletedCustomers().toSet(),
+            pendingDeletedSuppliers = getPendingDeletedSuppliers().toSet(),
+            pendingDeletedGroups = getPendingDeletedGroups().toSet(),
+            pendingDeletedUnits = getPendingDeletedUnits().toSet(),
+            pendingDeletedPayments = getPendingDeletedPayments().toSet(),
             onProgress = { progress, msg ->
                 cloudDownloadProgress.value = progress
                 cloudDownloadProgressMsg.value = msg
@@ -2125,14 +2542,16 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logoutWithSync(
-        onStatusUpdate: (String) -> Unit = {},
+        onProgress: (Float, String) -> Unit = { _, _ -> },
         onComplete: (Boolean, String) -> Unit = { _, _ -> }
     ) {
         val phone = _currentUser.value?.phoneNo ?: sharedPrefs.getString("logged_in_phone", "") ?: ""
         if (phone.isBlank() || !com.example.util.SyncManager.isNetworkAvailable(getApplication())) {
             viewModelScope.launch {
+                onProgress(0.5f, "ဒေတာများ ရှင်းလင်းနေပါသည်...")
                 clearAllBusinessData()
                 logout()
+                onProgress(1.0f, "Logout ပြုလုပ်ပြီးပါပြီ")
                 onComplete(true, "Logout ပြုလုပ်ပြီးပါပြီ")
             }
             return
@@ -2140,19 +2559,60 @@ class POSViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _isUploading.value = true
-            onStatusUpdate("Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းနေပါသည်...")
-            val result = com.example.util.SyncManager.mirrorLocalToCloud(
+            onProgress(0.10f, "Cloud ချိတ်ဆက်မှု စစ်ဆေးနေပါသည်...")
+            onProgress(0.25f, "အော့ဖ်လိုင်း စာရင်းများ စစ်ဆေးစုစည်းနေပါသည်...")
+            val (delIds, delNames) = getPendingDeletedProducts()
+            val delVouchers = getPendingDeletedVouchers()
+            val manualStockProds = getPendingManualStockAdjustments()
+            val delCustomers = getPendingDeletedCustomers()
+            val delSuppliers = getPendingDeletedSuppliers()
+            val delGroups = getPendingDeletedGroups()
+            val delUnits = getPendingDeletedUnits()
+            val delPayments = getPendingDeletedPayments()
+
+            onProgress(0.40f, "အော့ဖ်လိုင်း စာရင်းများကို Cloud သို့ ပို့ဆောင်နေပါသည်...")
+            val syncResult = com.example.util.SyncManager.syncAllPendingData(
                 workerUrl = cloudflareWorkerUrl.value,
                 userPhone = phone,
-                repository = repository
+                repository = repository,
+                pendingDeletedProductIds = delIds,
+                pendingDeletedProductNames = delNames,
+                pendingDeletedVouchers = delVouchers,
+                manualStockAdjustedProductIds = manualStockProds,
+                pendingDeletedCustomers = delCustomers,
+                pendingDeletedSuppliers = delSuppliers,
+                pendingDeletedGroups = delGroups,
+                pendingDeletedUnits = delUnits,
+                pendingDeletedPayments = delPayments
             )
+
+            onProgress(0.70f, "Local အတိုင်း Cloud သို့ ၁၀၀% Mirror သိမ်းဆည်းနေပါသည်...")
+            val mirrorResult = com.example.util.SyncManager.mirrorLocalToCloud(
+                workerUrl = cloudflareWorkerUrl.value,
+                userPhone = phone,
+                repository = repository,
+                onProgress = { p, msg ->
+                    val combined = 0.70f + (p * 0.25f)
+                    onProgress(combined, msg)
+                }
+            )
+
+            onProgress(0.95f, "အကောင့် ဒေတာများ လုံခြုံစွာ ရှင်းလင်းနေပါသည်...")
             _isUploading.value = false
-            // Clear local business data so it won't leak to another account
+            clearPendingDeletedProducts()
+            clearPendingDeletedVouchers()
+            clearManualStockAdjustments()
+            clearPendingDeletedCustomers()
+            clearPendingDeletedSuppliers()
+            clearPendingDeletedGroups()
+            clearPendingDeletedUnits()
+            clearPendingDeletedPayments()
             clearAllBusinessData()
             logout()
+            onProgress(1.0f, "အောင်မြင်စွာ သိမ်းဆည်းပြီး Logout ပြုလုပ်ပြီးပါပြီ")
             onComplete(
-                result.success,
-                if (result.success) "Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းပြီး Logout ပြုလုပ်ပြီးပါပြီ" else result.message
+                syncResult.success || mirrorResult.success,
+                if (syncResult.success || mirrorResult.success) "Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းပြီး Logout ပြုလုပ်ပြီးပါပြီ" else syncResult.message
             )
         }
     }

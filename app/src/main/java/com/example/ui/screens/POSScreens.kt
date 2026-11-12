@@ -174,14 +174,8 @@ fun SplashScreen(navController: NavController, viewModel: POSViewModel) {
                 return@launch
             }
 
-            // Check if local expiration date has already passed
-            val localExpiresAt = sharedPrefs.getLong("account_expires_at_$loggedPhone", 0L)
-            val nowMs = System.currentTimeMillis()
-            if (localExpiresAt > 0L && nowMs > localExpiresAt) {
-                val localAcc = viewModel.getLocalAccountByPhone(loggedPhone)
-                if (localAcc != null && localAcc.status != "expired") {
-                    viewModel.insertAccount(localAcc.copy(status = "expired"))
-                }
+            // Check if account has already expired (by timestamp or status)
+            if (viewModel.checkAndSetAccountExpiredDirect(loggedPhone)) {
                 navController.navigate("subscription_expired") {
                     popUpTo("splash") { inclusive = true }
                 }
@@ -1537,6 +1531,9 @@ fun SubscriptionExpiredScreen(navController: NavController, viewModel: POSViewMo
     val scope = rememberCoroutineScope()
     var isChecking by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf("") }
+    var isLoggingOut by remember { mutableStateOf(false) }
+    var logoutProgress by remember { mutableStateOf(0f) }
+    var logoutStatusMessage by remember { mutableStateOf("Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းနေပါသည်...") }
 
     val formattedExpireDate = remember(trialInfo.first) {
         if (trialInfo.first > 0L) {
@@ -1803,7 +1800,8 @@ fun SubscriptionExpiredScreen(navController: NavController, viewModel: POSViewMo
                             localAccount = localAccount,
                             currentDeviceId = currentDeviceId
                         )
-                        if (isAccessAllowed) {
+                        if (isAccessAllowed || isActive) {
+                            viewModel.isAccountExpired.value = false
                             val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
                             sharedPrefs.edit().putString("last_checked_date", todayStr).apply()
                             Toast.makeText(context, "သက်တမ်းတိုးခြင်း အောင်မြင်ပါသည် (Subscription Active)", Toast.LENGTH_SHORT).show()
@@ -1831,7 +1829,7 @@ fun SubscriptionExpiredScreen(navController: NavController, viewModel: POSViewMo
                 } else {
                     Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("သက်တမ်းတိုးပြီးပါက စစ်ဆေးမည် (Check Status)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("ReActive Account", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
 
@@ -1840,17 +1838,93 @@ fun SubscriptionExpiredScreen(navController: NavController, viewModel: POSViewMo
             // Logout Button
             OutlinedButton(
                 onClick = {
-                    sharedPrefs.edit().remove("logged_in_phone").apply()
-                    navController.navigate("login") {
-                        popUpTo("splash") { inclusive = true }
+                    if (!viewModel.isInternetAvailable(context)) {
+                        Toast.makeText(context, "အင်တာနက် မရှိပါသဖြင့် Cloud သို့ မတင်နိုင်ပါ။ Logout ပြုလုပ်လိုက်ပါပြီ။", Toast.LENGTH_SHORT).show()
+                        viewModel.logout()
+                        navController.navigate("login") {
+                            popUpTo("splash") { inclusive = true }
+                        }
+                    } else {
+                        isLoggingOut = true
+                        logoutProgress = 0.05f
+                        logoutStatusMessage = "Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းနေပါသည်..."
+                        scope.launch {
+                            viewModel.logoutWithSync(
+                                onProgress = { p, msg ->
+                                    logoutProgress = p
+                                    logoutStatusMessage = msg
+                                },
+                                onComplete = { success, msg ->
+                                    isLoggingOut = false
+                                    Toast.makeText(
+                                        context,
+                                        if (success) "Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းပြီး Logout ပြုလုပ်ပြီးပါပြီ" else msg,
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    navController.navigate("login") {
+                                        popUpTo("splash") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
                     }
                 },
+                enabled = !isLoggingOut,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text("အကောင့် ထွက်မည် (Logout)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+            }
+        }
+
+        if (isLoggingOut) {
+            androidx.compose.ui.window.Dialog(onDismissRequest = { /* prevent dismiss */ }) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.size(90.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                progress = { logoutProgress.coerceIn(0f, 1f) },
+                                color = BrandPurple,
+                                strokeWidth = 6.dp,
+                                trackColor = Color(0xFFEEEEEE),
+                                modifier = Modifier.size(80.dp)
+                            )
+                            Text(
+                                text = "${(logoutProgress.coerceIn(0f, 1f) * 100).toInt()}%",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BrandPurple
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = logoutStatusMessage,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            color = Color(0xFF1E1035)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Cloud ပေါ်သို့ အရောင်းစာရင်းများ သိမ်းဆည်းပြီးမှ Logout ပြုလုပ်ပါမည်...",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         }
     }
@@ -2356,45 +2430,6 @@ fun DashboardScreen(navController: NavController, viewModel: POSViewModel) {
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        // Quick 1-Tap Cloud Upload Button
-                        IconButton(
-                            onClick = {
-                                if (isUploading) {
-                                    android.widget.Toast.makeText(context, "Cloud ပေါ်သို့ ဒေတာတင်နေပါသည်...", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
-                                    android.widget.Toast.makeText(context, "Cloud ပေါ်သို့ ဒေတာတင်နေပါသည်...", android.widget.Toast.LENGTH_SHORT).show()
-                                    viewModel.triggerMirrorSync { success, msg ->
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            if (success) "Cloud ပေါ်သို့ ၁၀၀% အောင်မြင်စွာ တင်ပြီးပါပြီ။" else msg,
-                                            android.widget.Toast.LENGTH_SHORT
-                                        ).show()
-                                    }
-                                }
-                            },
-                            enabled = !isUploading,
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(if (isUploading) Color(0xFFEDE7F6) else Color(0xFFE8F5E9), shape = CircleShape)
-                        ) {
-                            if (isUploading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = Color(0xFF5E35B1)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.CloudUpload,
-                                    contentDescription = "Cloud ပေါ်သို့ ဒေတာတင်ရန် (Upload to Cloud)",
-                                    tint = if (isOnline && isServerReachable) Color(0xFF2E7D32) else Color.Gray,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(6.dp))
-
                         // Profile Icon Button
                         IconButton(
                             onClick = { navController.navigate("user_profile") },
@@ -2451,48 +2486,7 @@ fun DashboardScreen(navController: NavController, viewModel: POSViewModel) {
                                 .verticalScroll(rememberScrollState())
                                 .padding(16.dp)
                         ) {
-                            // 7-day Trial Banner
-                        val trialInfo = remember(currentUser) { viewModel.getAccountTrialInfo(currentUser?.phoneNo) }
-                        if (trialInfo.third && trialInfo.second >= 0) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = if (trialInfo.second <= 2) Color(0xFFFFF3E0) else Color(0xFFEDE7F6)),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 12.dp)
-                                    .clickable { navController.navigate("subscription_expired") }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Filled.AccessTime,
-                                            contentDescription = "Trial",
-                                            tint = if (trialInfo.second <= 2) Color(0xFFE65100) else BrandPurple,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "စမ်းသပ်ကာလ ၇ ရက် (${trialInfo.second} ရက် ကျန်ရှိ)",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (trialInfo.second <= 2) Color(0xFFE65100) else BrandPurple
-                                        )
-                                    }
-                                    Text(
-                                        text = "သက်တမ်းတိုးရန် >",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (trialInfo.second <= 2) Color(0xFFE65100) else BrandPurple
-                                    )
-                                }
-                            }
-                        }
-
-                        // Hero Banner Card
+                            // Hero Banner Card
                         HeroBannerCard(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -3058,6 +3052,7 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
     var passwordError by remember { mutableStateOf("") }
     var isUpdatingPassword by remember { mutableStateOf(false) }
     var isLoggingOut by remember { mutableStateOf(false) }
+    var logoutProgress by remember { mutableStateOf(0f) }
     var logoutStatusMessage by remember { mutableStateOf("Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းနေပါသည်...") }
     val coroutineScope = rememberCoroutineScope()
 
@@ -3072,11 +3067,24 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
                     modifier = Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    CircularProgressIndicator(
-                        color = Color.Red,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(48.dp)
-                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(90.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { logoutProgress.coerceIn(0f, 1f) },
+                            color = BrandPurple,
+                            strokeWidth = 6.dp,
+                            trackColor = Color(0xFFEEEEEE),
+                            modifier = Modifier.size(80.dp)
+                        )
+                        Text(
+                            text = "${(logoutProgress.coerceIn(0f, 1f) * 100).toInt()}%",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BrandPurple
+                        )
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = logoutStatusMessage,
@@ -3087,7 +3095,7 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Cloud ပေါ်သို့ စာရင်းအချက်အလက်များ သိမ်းဆည်းပြီးမှ Logout ပြုလုပ်ပါမည်...",
+                        text = "Cloud ပေါ်သို့ အရောင်းစာရင်းများ သိမ်းဆည်းပြီးမှ Logout ပြုလုပ်ပါမည်...",
                         fontSize = 12.sp,
                         color = Color.Gray,
                         textAlign = TextAlign.Center
@@ -3110,6 +3118,22 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
             } else {
                 allAccounts.lastOrNull()
             }
+        }
+    }
+
+    val userPhone = profile?.phoneNo ?: ""
+    var expiryTimestamp by remember(userPhone) {
+        mutableStateOf(sharedPrefs.getLong("account_expires_at_$userPhone", 0L))
+    }
+    var expiryDaysLeft by remember(userPhone) {
+        mutableStateOf(sharedPrefs.getInt("account_days_left_$userPhone", -1))
+    }
+
+    LaunchedEffect(userPhone) {
+        if (userPhone.isNotEmpty()) {
+            viewModel.checkUserActivationStatus(context, userPhone)
+            expiryTimestamp = sharedPrefs.getLong("account_expires_at_$userPhone", 0L)
+            expiryDaysLeft = sharedPrefs.getInt("account_days_left_$userPhone", -1)
         }
     }
 
@@ -3355,6 +3379,25 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
                         HorizontalDivider(color = if (globalIsDarkTheme) Color(0xFF33323B) else Color(0xFFEEEEEE), modifier = Modifier.padding(vertical = 4.dp))
 
                         DetailItem(label = "ဖုန်းနံပါတ်", value = profile?.phoneNo?.ifEmpty { "N/A" } ?: "N/A")
+                        HorizontalDivider(color = if (globalIsDarkTheme) Color(0xFF33323B) else Color(0xFFEEEEEE), modifier = Modifier.padding(vertical = 4.dp))
+
+                        val expireDateStr = remember(expiryTimestamp, expiryDaysLeft) {
+                            if (expiryTimestamp > 0L) {
+                                val dateFormatted = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date(expiryTimestamp))
+                                val now = System.currentTimeMillis()
+                                if (now > expiryTimestamp) {
+                                    "$dateFormatted (သက်တမ်းကုန်ဆုံးပြီး)"
+                                } else if (expiryDaysLeft >= 0) {
+                                    "$dateFormatted ($expiryDaysLeft ရက်ကျန်)"
+                                } else {
+                                    val days = Math.max(0L, (expiryTimestamp - now) / (24 * 60 * 60 * 1000L))
+                                    "$dateFormatted ($days ရက်ကျန်)"
+                                }
+                            } else {
+                                "သက်တမ်း အကန့်အသတ်မရှိ (Active)"
+                            }
+                        }
+                        DetailItem(label = "သက်တမ်းကုန်ဆုံးမည့်ရက် (Expire Date)", value = expireDateStr)
                     }
                 }
 
@@ -3370,10 +3413,14 @@ fun UserProfileScreen(navController: NavController, viewModel: POSViewModel) {
                             }
                         } else {
                             isLoggingOut = true
+                            logoutProgress = 0.05f
                             logoutStatusMessage = "Cloud ပေါ်သို့ ဒေတာများ သိမ်းဆည်းနေပါသည်..."
                             coroutineScope.launch {
                                 viewModel.logoutWithSync(
-                                    onStatusUpdate = { msg -> logoutStatusMessage = msg },
+                                    onProgress = { p, msg ->
+                                        logoutProgress = p
+                                        logoutStatusMessage = msg
+                                    },
                                     onComplete = { success, msg ->
                                         isLoggingOut = false
                                         android.widget.Toast.makeText(
@@ -11709,14 +11756,28 @@ fun SalesHistoryScreen(navController: NavController, viewModel: POSViewModel) {
                         }
                         
                         // Main history list block with pull-to-refresh
-                        Box(
+                        PullToRefreshBox(
+                            isRefreshing = isRefreshing,
+                            onRefresh = {
+                                coroutineScope.launch {
+                                    isRefreshing = true
+                                    if (loggedPhone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(context)) {
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            viewModel.pullCloudDataDirect(loggedPhone)
+                                        }
+                                    }
+                                    isRefreshing = false
+                                }
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxWidth()
                         ) {
                             if (filteredVouchers.isEmpty()) {
                                 Column(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState()),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
@@ -11745,7 +11806,7 @@ fun SalesHistoryScreen(navController: NavController, viewModel: POSViewModel) {
                                         onClick = {
                                             coroutineScope.launch {
                                                 isRefreshing = true
-                                                if (loggedPhone.isNotBlank() && workerUrl.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(context)) {
+                                                if (loggedPhone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(context)) {
                                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                         viewModel.pullCloudDataDirect(loggedPhone)
                                                     }
@@ -11768,40 +11829,6 @@ fun SalesHistoryScreen(navController: NavController, viewModel: POSViewModel) {
                                         .fillMaxSize()
                                         .padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    item {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(bottom = 8.dp),
-                                            horizontalArrangement = Arrangement.End,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            TextButton(
-                                                onClick = {
-                                                    coroutineScope.launch {
-                                                        isRefreshing = true
-                                                        if (loggedPhone.isNotBlank() && workerUrl.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(context)) {
-                                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                                viewModel.pullCloudDataDirect(loggedPhone)
-                                                            }
-                                                        }
-                                                        isRefreshing = false
-                                                    }
-                                                }
-                                            ) {
-                                                if (isRefreshing) {
-                                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = BrandPurple)
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text("ဆွဲနေသည်...", fontSize = 13.sp, color = BrandPurple)
-                                                } else {
-                                                    Icon(imageVector = Icons.Filled.Refresh, contentDescription = "Refresh", modifier = Modifier.size(16.dp), tint = BrandPurple)
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Text("အောက်သို့ဆွဲ၍ (သို့) နှိပ်၍ Refresh မည်", fontSize = 13.sp, color = BrandPurple)
-                                                }
-                                            }
-                                        }
-                                    }
-
                                     items(filteredVouchers, key = { it.receiptNo }) { voucher: Voucher ->
                                         val dateString = remember(voucher.timestamp) {
                                             val sdf = SimpleDateFormat("dd/MM/yyyy hh:mm a", Locale.getDefault())
@@ -16539,7 +16566,7 @@ fun AddCustomerScreen(navController: NavController, viewModel: POSViewModel) {
                                 navController.popBackStack()
                             }
                         } else {
-                            viewModel.updateCustomer(cust.copy(name = name, phone = phone, address = address, note = note)) {
+                            viewModel.updateCustomer(cust.copy(name = name, phone = phone, address = address, note = note), oldName = cust.name) {
                                 android.widget.Toast.makeText(context, "ပြင်ပြီးပါပြီ။", android.widget.Toast.LENGTH_SHORT).show()
                                 navController.popBackStack()
                             }
@@ -16970,7 +16997,7 @@ fun AddSupplierScreen(navController: NavController, viewModel: POSViewModel) {
                                 navController.popBackStack()
                             }
                         } else {
-                            viewModel.updateSupplier(sup.copy(name = name, phone = phone, address = address, note = note)) {
+                            viewModel.updateSupplier(sup.copy(name = name, phone = phone, address = address, note = note), oldName = sup.name) {
                                 android.widget.Toast.makeText(context, "ပြင်ပြီးပါပြီ။", android.widget.Toast.LENGTH_SHORT).show()
                                 navController.popBackStack()
                             }
@@ -18964,185 +18991,6 @@ fun CloudSyncScreen(viewModel: com.example.viewmodel.POSViewModel) {
 
                 HorizontalDivider(color = Color(0xFFEEEEEE))
 
-                Text(
-                    text = "အရောင်းနှင့် အဝယ်စာရင်းများ (Sales & Purchases):",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BrandPurple
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Color(0xFF5E35B1), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("အရောင်းဘောက်ချာများ (Sales):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("$salesVouchersCount စောင်", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ShoppingCart, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("အဝယ်ဘောက်ချာများ (Purchases):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("$purchaseVouchersCount စောင်", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                HorizontalDivider(color = Color(0xFFEEEEEE))
-
-                Text(
-                    text = "အကြွေးစာရင်းများ (Credit / Debts):",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFC62828)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PersonRemove, contentDescription = null, tint = Color(0xFFD32F2F), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ဝယ်သူ အကြွေးကျန် (Customer Debts):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${customerDebts.size} ဦး (${customerDebtsTotal.toLong()} Ks)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (customerDebts.isNotEmpty()) Color(0xFFD32F2F) else AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Store, contentDescription = null, tint = Color(0xFFE65100), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ကုန်သွင်းသူ အကြွေးကျန် (Supplier Debts):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${supplierDebts.size} ဦး (${supplierDebtsTotal.toLong()} Ks)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (supplierDebts.isNotEmpty()) Color(0xFFE65100) else AppTextColor)
-                }
-
-                HorizontalDivider(color = Color(0xFFEEEEEE))
-
-                Text(
-                    text = "အခြေခံအချက်အလက်များ (Master Data):",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BrandPurple
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Inventory2, contentDescription = null, tint = Color(0xFF1976D2), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ကုန်ပစ္စည်းများ (Products):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allProducts.size} မျိုး", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Category, contentDescription = null, tint = Color(0xFF1E88E5), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ကုန်ပစ္စည်း အမျိုးအစားများ (Groups):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allGroups.size} မျိုး", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocalOffer, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ယူနစ်များ (Units):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allUnits.size} ခု", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.People, contentDescription = null, tint = Color(0xFF388E3C), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ဖောက်သည်/ဝယ်သူများ (Customers):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allCustomers.size} ဦး", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Groups, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ကုန်သွင်းသူများ (Suppliers):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allSuppliers.size} ဦး", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.AccountBalanceWallet, contentDescription = null, tint = Color(0xFFFB8C00), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ငွေပေးချေမှု နည်းလမ်းများ (Payments):", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allPayments.size} မျိုး", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                HorizontalDivider(color = Color(0xFFEEEEEE))
-
-                Text(
-                    text = "ကုန်ကျစရိတ်များ (Expenses):",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = BrandPurple
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Receipt, contentDescription = null, tint = Color(0xFF7E57C2), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("ကုန်ကျစရိတ် အမျိုးအစား/မှတ်တမ်း:", fontSize = 12.sp, color = AppTextColor)
-                    }
-                    Text("${allExpenseCategories.size} မျိုး / ${allExpenses.size} ခု (${totalExpenseAmount.toLong()} Ks)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppTextColor)
-                }
-
-                HorizontalDivider(color = Color(0xFFEEEEEE))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -19169,34 +19017,11 @@ fun CloudSyncScreen(viewModel: com.example.viewmodel.POSViewModel) {
             }
         }
 
-        // Action Buttons
-        // 100% Exact Mirror Sync Button
+        // Action Buttons: Only Upload to Cloud and Restore from Cloud
         Button(
             onClick = {
                 viewModel.triggerMirrorSync { success, msg ->
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                }
-            },
-            enabled = !isUploading,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-        ) {
-            Icon(Icons.Default.CloudSync, contentDescription = "Mirror Sync", tint = Color.White)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (isUploading) "၁၀၀% Mirror တင်နေပါသည်..." else "Local အတိုင်း Cloud သို့ ၁၀၀% Mirror တင်မည်",
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-        }
-
-        Button(
-            onClick = {
-                viewModel.triggerRealSync { success, msg ->
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (success) "Cloud ပေါ်သို့ ၁၀၀% အောင်မြင်စွာ တင်ပြီးပါပြီ။" else msg, Toast.LENGTH_SHORT).show()
                 }
             },
             enabled = !isUploading,
@@ -19206,12 +19031,13 @@ fun CloudSyncScreen(viewModel: com.example.viewmodel.POSViewModel) {
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Icon(Icons.Default.CloudUpload, contentDescription = "Sync", tint = Color.White)
+            Icon(Icons.Default.CloudUpload, contentDescription = "Upload", tint = Color.White)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (isUploading) "Cloud သို့ တင်နေပါသည်..." else "Cloud သို့ ဒေတာ အားလုံးတင်မည် (Sync Now)",
+                text = if (isUploading) "Uploading to Cloud..." else "Upload to Cloud",
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                fontSize = 15.sp
             )
         }
 
@@ -19227,12 +19053,13 @@ fun CloudSyncScreen(viewModel: com.example.viewmodel.POSViewModel) {
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Icon(Icons.Default.CloudDownload, contentDescription = "Download", tint = BrandPurple)
+            Icon(Icons.Default.CloudDownload, contentDescription = "Restore", tint = BrandPurple)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Cloud မှ ဒေတာများ ပြန်ယူမည် (Restore from Cloud)",
+                text = if (isUploading) "Restoring from Cloud..." else "Restore from Cloud",
                 fontWeight = FontWeight.Bold,
-                color = BrandPurple
+                color = BrandPurple,
+                fontSize = 15.sp
             )
         }
 
@@ -20703,27 +20530,6 @@ fun SalesDailyReceiptsScreen(navController: NavController, viewModel: POSViewMod
                                         contentDescription = "Payments Filter",
                                         tint = Color(0xFF00897B)
                                     )
-                                }
-
-                                // Cloud Refresh Icon
-                                IconButton(
-                                    onClick = {
-                                        if (loggedPhone.isNotBlank() && com.example.util.SyncManager.isNetworkAvailable(context)) {
-                                            coroutineScope.launch {
-                                                viewModel.pullCloudDataDirect(loggedPhone)
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    if (isUploading) {
-                                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = BrandPurple)
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Filled.Refresh,
-                                            contentDescription = "Cloud Refresh",
-                                            tint = BrandPurple
-                                        )
-                                    }
                                 }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)

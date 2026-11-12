@@ -273,6 +273,185 @@ object SyncManager {
         }
     }
 
+    suspend fun adjustStockOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        productId: Long,
+        productName: String,
+        newQuantity: Int,
+        newAlertQuantity: Int
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        val cleanUrl = workerUrl.trim().removeSuffix("/")
+        try {
+            val targetUrl = "$cleanUrl/api/sync/adjust-stock"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("productId", productId)
+                put("productName", productName)
+                put("newQuantity", newQuantity)
+                put("newAlertQuantity", newAlertQuantity)
+            }
+
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun deleteCustomerOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        customerName: String,
+        customerId: Long = 0L
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        try {
+            val cleanUrl = workerUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/sync/delete-customer"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("customerName", customerName)
+                if (customerId > 0L) put("customerId", customerId)
+            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun deleteSupplierOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        supplierName: String,
+        supplierId: Long = 0L
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        try {
+            val cleanUrl = workerUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/sync/delete-supplier"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("supplierName", supplierName)
+                if (supplierId > 0L) put("supplierId", supplierId)
+            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun deleteGroupOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        groupName: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        try {
+            val cleanUrl = workerUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/sync/delete-group"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("groupName", groupName)
+            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun deleteUnitOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        unitName: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        try {
+            val cleanUrl = workerUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/sync/delete-unit"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("unitName", unitName)
+            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    suspend fun deletePaymentOnCloud(
+        workerUrl: String,
+        userPhone: String,
+        method: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (workerUrl.isBlank() || userPhone.isBlank()) return@withContext false
+        try {
+            val cleanUrl = workerUrl.trim().removeSuffix("/")
+            val targetUrl = "$cleanUrl/api/sync/delete-payment"
+            val conn = URL(targetUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("userPhone", userPhone)
+                put("method", method)
+            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     /**
      * Atomically mirrors 100% of local products, stock, vouchers, customers to the Cloud.
      * Guarantees that what is in local is EXACTLY mirrored on the Cloud.
@@ -280,18 +459,21 @@ object SyncManager {
     suspend fun mirrorLocalToCloud(
         workerUrl: String,
         userPhone: String,
-        repository: Repository
+        repository: Repository,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): SyncResult = withContext(Dispatchers.IO) {
         if (workerUrl.isBlank() || userPhone.isBlank()) {
             return@withContext SyncResult(false, 0, 0, 0, "ကျေးဇူးပြု၍ Login ဝင်ထားပါ (No user phone)")
         }
         val cleanUrl = workerUrl.trim().removeSuffix("/")
+        onProgress(0.1f, "Cloud ချိတ်ဆက်မှု စစ်ဆေးနေပါသည်...")
         val check = checkServerReachability(workerUrl)
         if (!check.isReachable) {
             return@withContext SyncResult(false, 0, 0, 0, check.message)
         }
 
         try {
+            onProgress(0.3f, "ဒေတာများကို စုစည်းပြင်ဆင်နေပါသည်...")
             val allProducts = repository.getAllProductsDirect()
             val allVouchers = repository.getAllCompletedVouchersDirect()
             val allVoucherItems = repository.getAllVoucherItemsDirect()
@@ -444,12 +626,15 @@ object SyncManager {
             conn.setRequestProperty("Content-Type", "application/json; utf-8")
             conn.doOutput = true
 
+            onProgress(0.6f, "Cloud ပေါ်သို့ စာရင်းများ ပေးပို့သိမ်းဆည်းနေပါသည်...")
             OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
             val code = conn.responseCode
             if (code in 200..299) {
+                onProgress(0.95f, "Cloud စာရင်းများ အတည်ပြုပြီးပါပြီ")
                 repository.markAllProductsSynced()
                 repository.markAllVouchersSynced()
                 repository.markAllCustomersSynced()
+                onProgress(1.0f, "အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။")
                 SyncResult(
                     success = true,
                     syncedVouchersCount = allVouchers.size,
@@ -475,7 +660,13 @@ object SyncManager {
         repository: Repository,
         pendingDeletedProductIds: List<Long> = emptyList(),
         pendingDeletedProductNames: List<String> = emptyList(),
-        pendingDeletedVouchers: List<String> = emptyList()
+        pendingDeletedVouchers: List<String> = emptyList(),
+        manualStockAdjustedProductIds: Set<Long> = emptySet(),
+        pendingDeletedCustomers: List<String> = emptyList(),
+        pendingDeletedSuppliers: List<String> = emptyList(),
+        pendingDeletedGroups: List<String> = emptyList(),
+        pendingDeletedUnits: List<String> = emptyList(),
+        pendingDeletedPayments: List<String> = emptyList()
     ): SyncResult {
         if (userPhone.isBlank()) {
             return SyncResult(false, 0, 0, 0, "ကျေးဇူးပြု၍ အကောင့် Login ဝင်ထားပါ (No active user account)")
@@ -591,6 +782,7 @@ object SyncManager {
                     val prodsArr = JSONArray()
                     val pIds = mutableListOf<Long>()
                     for (p in unsyncedProducts) {
+                        val isManual = (p.id in manualStockAdjustedProductIds)
                         prodsArr.put(JSONObject().apply {
                             put("id", p.id)
                             put("name", p.name)
@@ -601,6 +793,9 @@ object SyncManager {
                             put("barcode", p.barcode)
                             put("quantity", p.quantity)
                             put("alertQuantity", p.alertQuantity)
+                            if (isManual) {
+                                put("isManualStockAdjustment", true)
+                            }
                         })
                         pIds.add(p.id)
                     }
@@ -620,49 +815,57 @@ object SyncManager {
 
                 // 3. Sync pending customers
                 val unsyncedCustomers = repository.getUnsyncedCustomers()
-                if (unsyncedCustomers.isNotEmpty()) {
-                    val targetUrl = "$cleanUrl/api/sync/customers"
-                    val conn = URL(targetUrl).openConnection() as HttpURLConnection
-                    conn.requestMethod = "POST"
-                    conn.connectTimeout = 10000
-                    conn.readTimeout = 10000
-                    conn.setRequestProperty("Content-Type", "application/json; utf-8")
-                    conn.doOutput = true
+                if (unsyncedCustomers.isNotEmpty() || pendingDeletedCustomers.isNotEmpty()) {
+                    try {
+                        val targetUrl = "$cleanUrl/api/sync/customers"
+                        val conn = URL(targetUrl).openConnection() as HttpURLConnection
+                        conn.requestMethod = "POST"
+                        conn.connectTimeout = 10000
+                        conn.readTimeout = 10000
+                        conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                        conn.doOutput = true
 
-                    val custArr = JSONArray()
-                    val cIds = mutableListOf<Long>()
-                    val seenPendingCust = mutableSetOf<String>()
-                    for (c in unsyncedCustomers) {
-                        val clean = c.name.trim()
-                        val norm = clean.lowercase()
-                        if (clean.isNotBlank() && norm !in seenPendingCust) {
-                            seenPendingCust.add(norm)
-                            custArr.put(JSONObject().apply {
-                                put("name", clean)
-                                put("phone", c.phone)
-                                put("address", c.address)
-                                put("note", c.note)
-                            })
+                        val custArr = JSONArray()
+                        val cIds = mutableListOf<Long>()
+                        val seenPendingCust = mutableSetOf<String>()
+                        for (c in unsyncedCustomers) {
+                            val clean = c.name.trim()
+                            val norm = clean.lowercase()
+                            if (clean.isNotBlank() && norm !in seenPendingCust) {
+                                seenPendingCust.add(norm)
+                                custArr.put(JSONObject().apply {
+                                    put("id", c.id)
+                                    put("name", clean)
+                                    put("phone", c.phone)
+                                    put("address", c.address)
+                                    put("note", c.note)
+                                })
+                            }
+                            cIds.add(c.id)
                         }
-                        cIds.add(c.id)
-                    }
 
-                    val payload = JSONObject().apply {
-                        put("userPhone", userPhone)
-                        put("customers", custArr)
-                    }
+                        val payload = JSONObject().apply {
+                            put("userPhone", userPhone)
+                            put("customers", custArr)
+                            if (pendingDeletedCustomers.isNotEmpty()) {
+                                put("deletedCustomers", JSONArray(pendingDeletedCustomers))
+                            }
+                        }
 
-                    OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
-                    val code = conn.responseCode
-                    if (code in 200..299) {
-                        repository.markCustomersSynced(cIds)
-                        syncedCustomersCount = cIds.size
+                        OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
+                        val code = conn.responseCode
+                        if (code in 200..299) {
+                            repository.markCustomersSynced(cIds)
+                            syncedCustomersCount = cIds.size
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Customers sync error: ${e.message}")
                     }
                 }
 
                 // 4. Sync product groups (categories)
                 val allGroups = repository.getAllGroupsDirect()
-                if (allGroups.isNotEmpty()) {
+                if (allGroups.isNotEmpty() || pendingDeletedGroups.isNotEmpty()) {
                     try {
                         val targetUrl = "$cleanUrl/api/sync/groups"
                         val conn = URL(targetUrl).openConnection() as HttpURLConnection
@@ -678,6 +881,9 @@ object SyncManager {
                         val payload = JSONObject().apply {
                             put("userPhone", userPhone)
                             put("groups", grpArr)
+                            if (pendingDeletedGroups.isNotEmpty()) {
+                                put("deletedGroups", JSONArray(pendingDeletedGroups))
+                            }
                         }
                         OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
                         conn.responseCode
@@ -688,7 +894,7 @@ object SyncManager {
 
                 // 5. Sync product units
                 val allUnits = repository.getAllUnitsDirect()
-                if (allUnits.isNotEmpty()) {
+                if (allUnits.isNotEmpty() || pendingDeletedUnits.isNotEmpty()) {
                     try {
                         val targetUrl = "$cleanUrl/api/sync/units"
                         val conn = URL(targetUrl).openConnection() as HttpURLConnection
@@ -704,6 +910,9 @@ object SyncManager {
                         val payload = JSONObject().apply {
                             put("userPhone", userPhone)
                             put("units", untArr)
+                            if (pendingDeletedUnits.isNotEmpty()) {
+                                put("deletedUnits", JSONArray(pendingDeletedUnits))
+                            }
                         }
                         OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
                         conn.responseCode
@@ -714,7 +923,7 @@ object SyncManager {
 
                 // 6. Sync payment methods
                 val allPayments = repository.getAllPaymentsDirect()
-                if (allPayments.isNotEmpty()) {
+                if (allPayments.isNotEmpty() || pendingDeletedPayments.isNotEmpty()) {
                     try {
                         val targetUrl = "$cleanUrl/api/sync/payments"
                         val conn = URL(targetUrl).openConnection() as HttpURLConnection
@@ -736,6 +945,9 @@ object SyncManager {
                         val payload = JSONObject().apply {
                             put("userPhone", userPhone)
                             put("payments", payArr)
+                            if (pendingDeletedPayments.isNotEmpty()) {
+                                put("deletedPayments", JSONArray(pendingDeletedPayments))
+                            }
                         }
                         OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
                         conn.responseCode
@@ -746,7 +958,7 @@ object SyncManager {
 
                 // 7. Sync suppliers
                 val allSuppliers = repository.getAllSuppliersDirect()
-                if (allSuppliers.isNotEmpty()) {
+                if (allSuppliers.isNotEmpty() || pendingDeletedSuppliers.isNotEmpty()) {
                     try {
                         val targetUrl = "$cleanUrl/api/sync/suppliers"
                         val conn = URL(targetUrl).openConnection() as HttpURLConnection
@@ -764,6 +976,7 @@ object SyncManager {
                             if (clean.isNotBlank() && norm !in seenPendingSup) {
                                 seenPendingSup.add(norm)
                                 supArr.put(JSONObject().apply {
+                                    put("id", sup.id)
                                     put("name", clean)
                                     put("phone", sup.phone)
                                     put("address", sup.address)
@@ -775,6 +988,9 @@ object SyncManager {
                         val payload = JSONObject().apply {
                             put("userPhone", userPhone)
                             put("suppliers", supArr)
+                            if (pendingDeletedSuppliers.isNotEmpty()) {
+                                put("deletedSuppliers", JSONArray(pendingDeletedSuppliers))
+                            }
                         }
                         OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
                         conn.responseCode
@@ -811,6 +1027,11 @@ object SyncManager {
         workerUrl: String,
         userPhone: String,
         repository: Repository,
+        pendingDeletedCustomers: Set<String> = emptySet(),
+        pendingDeletedSuppliers: Set<String> = emptySet(),
+        pendingDeletedGroups: Set<String> = emptySet(),
+        pendingDeletedUnits: Set<String> = emptySet(),
+        pendingDeletedPayments: Set<String> = emptySet(),
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): PullResult {
         if (userPhone.isBlank()) {
@@ -1050,7 +1271,7 @@ object SyncManager {
                 }
                 onProgress(0.85f, "ကုန်ပစ္စည်းနှင့် Stock လက်ကျန်များ ထည့်သွင်းပြီးပါပြီ...")
 
-                // 4. Restore customers (deduplicated by name and cleans up existing duplicates in local Room)
+                // 4. Restore customers (deduplicated by name and cleans up existing duplicates in local Room, with multi-device deletion sync)
                 val currentLocalCustomers = repository.getAllCustomersDirect()
                 val localCustomersByName = mutableMapOf<String, Customer>()
                 for (c in currentLocalCustomers) {
@@ -1062,12 +1283,32 @@ object SyncManager {
                     }
                 }
 
+                val deletedCustomersFromCloud = mutableSetOf<String>()
+                val delCustsArr = resObj.optJSONArray("deletedCustomers")
+                if (delCustsArr != null) {
+                    for (i in 0 until delCustsArr.length()) {
+                        deletedCustomersFromCloud.add(delCustsArr.optString(i).trim().lowercase())
+                    }
+                }
+                for (norm in pendingDeletedCustomers) {
+                    deletedCustomersFromCloud.add(norm.trim().lowercase())
+                }
+                for ((norm, c) in localCustomersByName) {
+                    if (norm in deletedCustomersFromCloud || c.name.trim().lowercase() in deletedCustomersFromCloud || c.id.toString() in deletedCustomersFromCloud) {
+                        repository.deleteCustomer(c)
+                    }
+                }
+
                 val custsArr = resObj.optJSONArray("customers") ?: JSONArray()
                 for (i in 0 until custsArr.length()) {
                     val c = custsArr.getJSONObject(i)
                     val cName = c.optString("name").trim()
                     if (cName.isBlank()) continue
                     val norm = cName.lowercase()
+                    val cIdStr = c.optString("id", "")
+                    if (norm in deletedCustomersFromCloud || cName in deletedCustomersFromCloud || (cIdStr.isNotBlank() && cIdStr in deletedCustomersFromCloud)) {
+                        continue
+                    }
                     val existing = localCustomersByName[norm]
                     if (existing != null) {
                         val updated = existing.copy(
@@ -1093,30 +1334,76 @@ object SyncManager {
                     }
                 }
 
-                // 5. Restore product groups
+                // 5. Restore product groups (with multi-device deletion sync)
+                val deletedGroupsFromCloud = mutableSetOf<String>()
+                val delGroupsArr = resObj.optJSONArray("deletedGroups")
+                if (delGroupsArr != null) {
+                    for (i in 0 until delGroupsArr.length()) {
+                        deletedGroupsFromCloud.add(delGroupsArr.optString(i).trim().lowercase())
+                    }
+                }
+                for (norm in pendingDeletedGroups) {
+                    deletedGroupsFromCloud.add(norm.trim().lowercase())
+                }
+                val currentLocalGroups = repository.getAllGroupsDirect()
+                for (g in currentLocalGroups) {
+                    val norm = g.name.trim().lowercase()
+                    if (norm in deletedGroupsFromCloud || norm in pendingDeletedGroups || g.name in pendingDeletedGroups) {
+                        repository.deleteGroup(g)
+                    }
+                }
                 val groupsArr = resObj.optJSONArray("groups") ?: JSONArray()
                 for (i in 0 until groupsArr.length()) {
-                    val gName = groupsArr.optString(i)
-                    if (gName.isNotBlank()) {
+                    val gName = groupsArr.optString(i).trim()
+                    val norm = gName.lowercase()
+                    if (gName.isNotBlank() && norm !in deletedGroupsFromCloud && norm !in pendingDeletedGroups && gName !in pendingDeletedGroups) {
                         repository.insertGroup(ProductGroup(gName))
                     }
                 }
 
-                // 6. Restore product units
+                // 6. Restore product units (with multi-device deletion sync)
+                val deletedUnitsFromCloud = mutableSetOf<String>()
+                val delUnitsArr = resObj.optJSONArray("deletedUnits")
+                if (delUnitsArr != null) {
+                    for (i in 0 until delUnitsArr.length()) {
+                        deletedUnitsFromCloud.add(delUnitsArr.optString(i).trim().lowercase())
+                    }
+                }
+                for (norm in pendingDeletedUnits) {
+                    deletedUnitsFromCloud.add(norm.trim().lowercase())
+                }
+                val currentLocalUnits = repository.getAllUnitsDirect()
+                for (u in currentLocalUnits) {
+                    val norm = u.name.trim().lowercase()
+                    if (norm in deletedUnitsFromCloud || norm in pendingDeletedUnits || u.name in pendingDeletedUnits) {
+                        repository.deleteUnit(u)
+                    }
+                }
                 val unitsArr = resObj.optJSONArray("units") ?: JSONArray()
                 for (i in 0 until unitsArr.length()) {
-                    val uName = unitsArr.optString(i)
-                    if (uName.isNotBlank()) {
+                    val uName = unitsArr.optString(i).trim()
+                    val norm = uName.lowercase()
+                    if (uName.isNotBlank() && norm !in deletedUnitsFromCloud && norm !in pendingDeletedUnits && uName !in pendingDeletedUnits) {
                         repository.insertUnit(ProductUnit(uName))
                     }
                 }
 
-                // 7. Clean up duplicated payments in local Room, then restore uniquely
+                // 7. Clean up duplicated payments in local Room, then restore uniquely (with multi-device deletion sync)
                 val currentLocalPayments = repository.getAllPaymentsDirect()
+                val deletedPaymentsFromCloud = mutableSetOf<String>()
+                val delPaymentsArr = resObj.optJSONArray("deletedPayments")
+                if (delPaymentsArr != null) {
+                    for (i in 0 until delPaymentsArr.length()) {
+                        deletedPaymentsFromCloud.add(delPaymentsArr.optString(i).trim().lowercase())
+                    }
+                }
+                for (norm in pendingDeletedPayments) {
+                    deletedPaymentsFromCloud.add(norm.trim().lowercase())
+                }
                 val localSeenMethods = mutableSetOf<String>()
                 for (p in currentLocalPayments) {
                     val norm = p.method.trim().lowercase()
-                    if (norm in localSeenMethods) {
+                    if (norm in localSeenMethods || norm in deletedPaymentsFromCloud || norm in pendingDeletedPayments || p.method in pendingDeletedPayments) {
                         repository.deletePayment(p)
                     } else {
                         localSeenMethods.add(norm)
@@ -1128,8 +1415,8 @@ object SyncManager {
                     val pay = paymentsArr.getJSONObject(i)
                     val m = if (pay.has("method")) pay.optString("method") else pay.optString("payment_method", "")
                     val clean = m.trim()
-                    if (clean.isNotBlank()) {
-                        val norm = clean.lowercase()
+                    val norm = clean.lowercase()
+                    if (clean.isNotBlank() && norm !in deletedPaymentsFromCloud && norm !in pendingDeletedPayments && clean !in pendingDeletedPayments) {
                         if (norm !in localSeenMethods) {
                             localSeenMethods.add(norm)
                             repository.insertPayment(Payment(
@@ -1141,7 +1428,7 @@ object SyncManager {
                     }
                 }
 
-                // 8. Restore suppliers (deduplicated by name and cleans up existing duplicates in local Room)
+                // 8. Restore suppliers (deduplicated by name and cleans up existing duplicates in local Room, with multi-device deletion sync)
                 val currentLocalSuppliers = repository.getAllSuppliersDirect()
                 val localSuppliersByName = mutableMapOf<String, Supplier>()
                 for (s in currentLocalSuppliers) {
@@ -1153,12 +1440,32 @@ object SyncManager {
                     }
                 }
 
+                val deletedSuppliersFromCloud = mutableSetOf<String>()
+                val delSupsArr = resObj.optJSONArray("deletedSuppliers")
+                if (delSupsArr != null) {
+                    for (i in 0 until delSupsArr.length()) {
+                        deletedSuppliersFromCloud.add(delSupsArr.optString(i).trim().lowercase())
+                    }
+                }
+                for (norm in pendingDeletedSuppliers) {
+                    deletedSuppliersFromCloud.add(norm.trim().lowercase())
+                }
+                for ((norm, s) in localSuppliersByName) {
+                    if (norm in deletedSuppliersFromCloud || s.name.trim().lowercase() in deletedSuppliersFromCloud || s.id.toString() in deletedSuppliersFromCloud) {
+                        repository.deleteSupplier(s)
+                    }
+                }
+
                 val suppliersArr = resObj.optJSONArray("suppliers") ?: JSONArray()
                 for (i in 0 until suppliersArr.length()) {
                     val s = suppliersArr.getJSONObject(i)
                     val sName = s.optString("name").trim()
                     if (sName.isBlank()) continue
                     val norm = sName.lowercase()
+                    val sIdStr = s.optString("id", "")
+                    if (norm in deletedSuppliersFromCloud || sName in deletedSuppliersFromCloud || (sIdStr.isNotBlank() && sIdStr in deletedSuppliersFromCloud)) {
+                        continue
+                    }
                     val existing = localSuppliersByName[norm]
                     if (existing != null) {
                         val updated = existing.copy(
